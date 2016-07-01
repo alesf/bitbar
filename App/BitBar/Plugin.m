@@ -11,14 +11,16 @@
 #import "STPrivilegedTask.h"
 #import "NSDate+DateTools.h"
 #import "NSColor+Hex.h"
+#import "NSString+Emojize.h"
+#import "NSString+ANSI.h"
 
 #define DEFAULT_TIME_INTERVAL_SECONDS ((double)60.)
 
 @implementation Plugin
 
-- init { return self = super.init ? _currentLine = -1, _cycleLinesIntervalSeconds = 5, self : nil; }
+- init { return (self = super.init) ? _currentLine = -1, _cycleLinesIntervalSeconds = 5, self : nil; }
 
-- initWithManager:(PluginManager*)manager { return self = self.init ? _manager = manager, self : nil; }
+- initWithManager:(PluginManager*)manager { return (self = self.init) ? _manager = manager, self : nil; }
 
 - (NSStatusItem *)statusItem { return _statusItem = _statusItem ?: ({
     
@@ -30,6 +32,20 @@
   
 }
 
+- (NSImage*) createImageFromBase64:(NSString*)string isTemplate:(BOOL)template{
+  NSData * imageData;
+  if ([NSData instancesRespondToSelector:@selector(initWithBase64EncodedString:options:)]) {
+    imageData = [[NSData alloc] initWithBase64EncodedString:string options:0];
+  }else {
+    imageData = [[NSData alloc] initWithBase64Encoding:string];
+  }
+  NSImage * image = [[NSImage alloc] initWithData:imageData];
+  if (template) {
+    [image setTemplate:true];
+  }
+  return image;
+}
+
 - (NSMenuItem*) buildMenuItemWithParams:(NSDictionary *)params {
 
   if ([[params[@"dropdown"] lowercaseString] isEqualToString:@"false"]) {
@@ -37,6 +53,12 @@
   }
   
   NSString * fullTitle = params[@"title"];
+  if (![[params[@"emojize"] lowercaseString] isEqualToString:@"false"]) {
+    fullTitle = [fullTitle emojizedString];
+  }
+  if (![[params[@"trim"] lowercaseString] isEqualToString:@"false"]) {
+      fullTitle = [fullTitle stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+  }
 
   CGFloat titleLength = [fullTitle length];
   CGFloat lengthParam = params[@"length"] ? [params[@"length"] floatValue] : titleLength;
@@ -46,7 +68,7 @@
 
   SEL sel = params[@"href"] ? @selector(performMenuItemHREFAction:)
           : params[@"bash"] ? @selector(performMenuItemOpenTerminalAction:)
-          : params[@"refresh"] ? @selector(performRefreshNow:):
+          : params[@"refresh"] ? @selector(performRefreshNow):
     nil;
 
   NSMenuItem * item = [NSMenuItem.alloc initWithTitle:title action:sel keyEquivalent:@""];
@@ -54,12 +76,23 @@
   if (truncLength < titleLength)
     [item setToolTip:fullTitle];
 
+  item.representedObject = params;  
   if (sel) {
-    item.representedObject = params;
     [item setTarget:self];
   }
-  if (params[@"size"] || params[@"color"])
+  BOOL parseANSI = [fullTitle containsANSICodes] && ![[params[@"ansi"] lowercaseString] isEqualToString:@"false"];
+  if (params[@"font"] || params[@"size"] || params[@"color"] || parseANSI)
     item.attributedTitle = [self attributedTitleWithParams:params];
+  
+  if (params[@"alternate"]) {
+    item.alternate = YES;
+    item.keyEquivalentModifierMask = NSAlternateKeyMask;
+  }
+  if (params[@"templateImage"]) {
+    item.image = [self createImageFromBase64:params[@"templateImage"] isTemplate:true];
+  }else if (params[@"image"]) {
+    item.image = [self createImageFromBase64:params[@"image"] isTemplate:false];
+  }
 
   return item;
 }
@@ -67,6 +100,12 @@
 - (NSAttributedString*) attributedTitleWithParams:(NSDictionary *)params {
 
   NSString * fullTitle = params[@"title"];
+  if (![[params[@"emojize"] lowercaseString] isEqualToString:@"false"]) {
+    fullTitle = [fullTitle emojizedString];
+  }
+  if (![[params[@"trim"] lowercaseString] isEqualToString:@"false"]) {
+    fullTitle = [fullTitle stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+  }
 
   CGFloat titleLength = [fullTitle length];
   CGFloat lengthParam = params[@"length"] ? [params[@"length"] floatValue] : titleLength;
@@ -75,15 +114,31 @@
   NSString * title = truncLength < titleLength ? [[fullTitle substringToIndex:truncLength] stringByAppendingString:@"…"] : fullTitle;
 
   CGFloat     size = params[@"size"] ? [params[@"size"] floatValue] : 14;
-  NSFont    * font = [self isFontValid:params[@"font"]] ? [NSFont fontWithName:params[@"font"] size:size]
-                                     : [NSFont menuFontOfSize:size]
-                                    ?: [NSFont menuFontOfSize:size];
-  NSColor * fgColor;
-  NSMutableAttributedString * attributedTitle = [NSMutableAttributedString.alloc initWithString:title attributes:@{NSFontAttributeName: font}];
-  if (!params[@"color"]) return attributedTitle;
-  if ((fgColor = [NSColor colorWithWebColorString:[params objectForKey:@"color"]]))
-    [attributedTitle addAttribute:NSForegroundColorAttributeName value:fgColor range:NSMakeRange(0, title.length)];
-  return attributedTitle;
+  NSFont    * font;
+  if ([NSFont respondsToSelector:@selector(monospacedDigitSystemFontOfSize:weight:)]) {
+    font = [self isFontValid:params[@"font"]] ? [NSFont fontWithName:params[@"font"] size:size]
+                                       : [NSFont monospacedDigitSystemFontOfSize:size weight:NSFontWeightRegular]
+                                      ?: [NSFont monospacedDigitSystemFontOfSize:size weight:NSFontWeightRegular];
+  } else {
+    font = [self isFontValid:params[@"font"]] ? [NSFont fontWithName:params[@"font"] size:size]
+                                       : [NSFont menuFontOfSize:size]
+                                       ?: [NSFont menuFontOfSize:size];
+  }
+
+  NSDictionary* attributes = @{NSFontAttributeName: font, NSBaselineOffsetAttributeName : @1};
+  BOOL parseANSI = [fullTitle containsANSICodes] && ![[params[@"ansi"] lowercaseString] isEqualToString:@"false"];
+  if (parseANSI) {
+    NSMutableAttributedString * attributedTitle = [title attributedStringParsingANSICodes];
+    [attributedTitle addAttributes:attributes range:NSMakeRange(0, attributedTitle.length)];
+    return attributedTitle;
+  } else {
+    NSColor * fgColor;
+    NSMutableAttributedString * attributedTitle = [NSMutableAttributedString.alloc initWithString:title attributes:attributes];
+    if (!params[@"color"]) return attributedTitle;
+    if ((fgColor = [NSColor colorWithWebColorString:[params objectForKey:@"color"]]))
+      [attributedTitle addAttribute:NSForegroundColorAttributeName value:fgColor range:NSMakeRange(0, title.length)];
+    return attributedTitle;
+  }
 }
 
 - (NSMenuItem*) buildMenuItemForLine:(NSString *)line { return [self buildMenuItemWithParams:[self dictionaryForLine:line]]; }
@@ -92,7 +147,7 @@
   // Find the title
   NSRange found = [line rangeOfString:@"|"];
   if (found.location == NSNotFound) return @{ @"title": line };
-  NSString * title = [[line substringToIndex:found.location] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+  NSString * title = [line substringToIndex:found.location];
   NSMutableDictionary * params = @{@"title":title}.mutableCopy;
   
   // Find the parameters
@@ -127,19 +182,40 @@
   return params;
 }
 
--(void)performRefreshNow:(NSMenuItem*)menuItem {
+- (void)performRefreshNow {
     NSLog(@"Nothing to refresh in this plugin");
+}
+
+- (void)performHREFAction:(NSDictionary *)params {
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:params[@"href"]]];
 }
 
 - (void) performMenuItemHREFAction:(NSMenuItem *)menuItem {
 
-  [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:menuItem.representedObject[@"href"]]];
+  [self performHREFAction:menuItem.representedObject];
 }
 
+- (void) startTask:(NSMutableDictionary*)params {
+    id task = [params[@"root"] isEqualToString:@"true"] ? STPrivilegedTask.new : NSTask.new;
+    
+    [(NSTask*)task setLaunchPath:params[@"bash"]];
+    [(NSTask*)task setArguments:params[@"args"]];
+    
+    ((NSTask*)task).terminationHandler = ^(NSTask *task) {
+      if (params[@"refresh"]) {
+        [self performSelectorOnMainThread:@selector(performRefreshNow) withObject:NULL waitUntilDone:false];
+      }
+    };
+    @try {
+      [(NSTask*)task launch];
+    } @catch (NSException *e) {
+      NSLog(@"Error launching command for %@:\n\tCMD: %@\n\tARGS: %@\n%@", self.name, params[@"bash"], params[@"args"], e);
+    }
+    [(NSTask*)task waitUntilExit];
+}
 
-- (void) performMenuItemOpenTerminalAction:(NSMenuItem *)menuItem {
+- (void)performOpenTerminalAction:(NSMutableDictionary *)params {
 
-    NSMutableDictionary * params = menuItem.representedObject;
     NSString *bash = [params[@"bash"] stringByStandardizingPath].stringByResolvingSymlinksInPath,
            *param1 = params[@"param1"] ?: @"",
            *param2 = params[@"param2"] ?: @"",
@@ -159,37 +235,24 @@
     });
     
     if([terminal isEqual: @"false"]){
-
       NSLog(@"Args: %@", args);
-
-      id task = [params[@"root"] isEqualToString:@"true"] ? STPrivilegedTask.new : NSTask.new;
-
-      [(NSTask*)task setLaunchPath:bash];
-      [(NSTask*)task setArguments:args];
-
-      if (params[@"refresh"]) {
-          ((NSTask*)task).terminationHandler = ^(NSTask *task) {
-              [self performRefreshNow:NULL];
-          };
-          [(NSTask*)task launch];
-          [(NSTask*)task waitUntilExit];
-      }
-      else {
-        [(NSTask*)task launch];
-      }
+      [params setObject:bash forKey:@"bash"];
+      [params setObject:args forKey:@"args"];
+      [self performSelectorInBackground:@selector(startTask:) withObject:params];
     } else {
 
       NSString *full_link = [NSString stringWithFormat:@"%@ %@ %@ %@ %@ %@", bash, param1, param2, param3, param4, param5];
       NSString *s = [NSString stringWithFormat:@"tell application \"Terminal\" \n\
+                 do script \"%@\" \n\
                  activate \n\
-                 if length of (get every window) is 0 then \n\
-                 tell application \"System Events\" to tell process \"Terminal\" to click menu item \"New Window\" of menu \"File\" of menu bar 1 \n\
-                 end if \n\
-                 do script \"%@\" in front window activate \n\
                  end tell", full_link];
       NSAppleScript *as = [NSAppleScript.alloc initWithSource: s];
       [as executeAndReturnError:nil];
     }
+}
+
+- (void)performMenuItemOpenTerminalAction:(NSMenuItem *)menuItem {
+  [self performOpenTerminalAction:menuItem.representedObject];
 }
 
 - (void) rebuildMenuForStatusItem:(NSStatusItem*)statusItem {
@@ -223,9 +286,33 @@
         if ([line isEqualToString:@"---"]) {
           [menu addItem:[NSMenuItem separatorItem]];
         } else {
-          NSMenuItem * item = [self buildMenuItemForLine:line];
-          if(item)
-            [menu addItem:item];
+          NSMenu *submenu = menu;
+          
+          // traverse submenus up to the menu to add the item to
+          while ([line hasPrefix:@"--"]) {
+            line = [line substringFromIndex:2];
+            
+            NSMenuItem *lastItem = submenu.itemArray.lastObject;
+            
+            if (!lastItem.submenu) {
+              lastItem.submenu = [[NSMenu alloc] init];
+              lastItem.submenu.delegate = self;
+            }
+            
+            submenu = lastItem.submenu;
+            
+            if ([line isEqualToString:@"---"]) {
+              break;
+            }
+          }
+          
+          if ([line isEqualToString:@"---"]) {
+            [submenu addItem:[NSMenuItem separatorItem]];
+          } else {
+            NSMenuItem * item = [self buildMenuItemForLine:line];
+            if(item)
+              [submenu addItem:item];
+          }
         }
         
       }
@@ -304,6 +391,9 @@
   return YES;
 }
 
+- (void) close {
+}
+
 - (NSString*) lastUpdatedString { return [self.lastUpdated timeAgoSinceNow].lowercaseString; }
 
 - (void) cycleLines {
@@ -321,6 +411,33 @@
   
   if (self.titleLines.count > 0) {
     NSDictionary * params = [self dictionaryForLine:self.titleLines[self.currentLine]];
+    
+    // skip alternate line
+    if (params[@"alternate"]) {
+      [self cycleLines];
+      return;
+    }
+    
+    if (params[@"href"] || params[@"bash"] || params[@"refresh"]) {
+      self.statusItem.menu = nil;
+      self.statusItem.action = @selector(statusItemClicked);
+      self.statusItem.target = self;
+    } else if (!self.statusItem.menu) {
+      self.statusItem.action = NULL;
+      self.statusItem.target = nil;
+      [self rebuildMenuForStatusItem:self.statusItem];
+    }
+    
+    // Add image if present
+    if (params[@"templateImage"]) {
+      self.statusItem.image = [self createImageFromBase64:params[@"templateImage"] isTemplate:true];
+    }else if (params[@"image"]) {
+      self.statusItem.image = [self createImageFromBase64:params[@"image"] isTemplate:false];
+    } else {
+      self.statusItem.image = nil;
+    }
+    
+    
     self.statusItem.attributedTitle = [self attributedTitleWithParams:params];
     self.pluginIsVisible = YES;
   } else {
@@ -448,16 +565,72 @@
   return [self.titleLines count] > 1 || [self.allContentLines count]>0;
 }
 
+- (void)statusItemClicked {
+  NSDictionary *params = [self dictionaryForLine:self.titleLines[self.currentLine]];
+  if (params[@"href"]) {
+    [self performHREFAction:params];
+  } else if (params[@"bash"]) {
+    [self performOpenTerminalAction:[NSMutableDictionary dictionaryWithDictionary:params]];
+  } else if (params[@"refresh"]) {
+    [self performRefreshNow];
+  }
+}
+
 #pragma mark - NSMenuDelegate
 
 - (void)menuWillOpen:(NSMenu *)menu {
+  if (menu.supermenu) {
+    return;
+  }
+  
   self.menuIsOpen = YES;
+  
+  if (self.currentLine >= 0 && self.currentLine < self.titleLines.count) {
+    NSMutableDictionary *params = [NSMutableDictionary dictionaryWithDictionary:[self dictionaryForLine:self.titleLines[self.currentLine]]];
+    if (params[@"color"]) {
+      [params removeObjectForKey:@"color"];
+      self.statusItem.attributedTitle = [self attributedTitleWithParams:params];
+    }
+  }
+  
   [self.statusItem setHighlightMode:YES];
+
+  [self.lastUpdatedMenuItem setTitle:self.lastUpdated ? [NSString stringWithFormat:@"Updated %@", self.lastUpdatedString] : @"Refreshing…"];
 }
 
 - (void)menuDidClose:(NSMenu *)menu {
+  if (menu.supermenu) {
+    return;
+  }
+  
   self.menuIsOpen = NO;
   [self.statusItem setHighlightMode:NO];
+  
+  if (self.currentLine >= 0 && self.currentLine < self.titleLines.count) {
+    NSDictionary *params = [self dictionaryForLine:self.titleLines[self.currentLine]];
+    if (params[@"color"]) {
+      self.statusItem.attributedTitle = [self attributedTitleWithParams:params];
+    }
+  }
+}
+
+- (void)menu:(NSMenu *)menu willHighlightItem:(NSMenuItem *)item {
+  // restore about to be unhighlighted item
+  if (menu.highlightedItem.representedObject && menu.highlightedItem.attributedTitle) {
+    NSDictionary *params = menu.highlightedItem.representedObject;
+    if (params[@"color"]) {
+      menu.highlightedItem.attributedTitle = [self attributedTitleWithParams:params];
+    }
+  }
+  
+  // remove about to be highlighted item color
+  if (item.representedObject && item.attributedTitle) {
+    NSMutableDictionary *params = [NSMutableDictionary dictionaryWithDictionary:item.representedObject];
+    if (params[@"color"]) {
+      [params removeObjectForKey:@"color"];
+      item.attributedTitle = [self attributedTitleWithParams:params];
+    }
+  }
 }
 
 @end

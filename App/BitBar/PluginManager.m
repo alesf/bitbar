@@ -13,11 +13,20 @@
 #import "NSUserDefaults+Settings.h"
 #import "LaunchAtLoginController.h"
 
+@interface PluginManager () {
+  LaunchAtLoginController *_launchAtLoginController;
+}
+@end
+
 @implementation PluginManager
 
 - initWithPluginPath:(NSString*)path {
-
-  return self = super.init ? _path = path.stringByStandardizingPath, self : nil;
+  if (self = [super init]) {
+    _path = [path stringByStandardizingPath];
+    _launchAtLoginController = [[LaunchAtLoginController alloc] init];
+    [self performSelectorInBackground:@selector(getLatestVersion) withObject:nil];
+  }
+  return self;
 }
 
 - (void) showSystemStatusItemWithMessage:(NSString*)message {
@@ -48,12 +57,13 @@
 - (void) addHelperItemsToMenu:(NSMenu*)menu asSubMenu:(BOOL)submenu {
   
   NSMenu *targetMenu;
+  NSMenuItem *moreItem = nil;
   
   if (submenu) {
     
     NSMenu *moreMenu = [NSMenu.alloc initWithTitle:@"Preferences"];
 
-    NSMenuItem *moreItem = [NSMenuItem.alloc initWithTitle:@"Preferences" action:nil keyEquivalent:@""];
+    moreItem = [NSMenuItem.alloc initWithTitle:@"Preferences" action:nil keyEquivalent:@""];
     moreItem.submenu = moreMenu;
     [menu addItem:moreItem];
     targetMenu = moreMenu;
@@ -61,39 +71,60 @@
   } else targetMenu = menu;
   
   // add reset, aka refreshMenuItem
-  ADD_MENU(@"Refresh ", reset, @"r", self);
+  ADD_MENU(@"Refresh all", reset, @"r", self);
 
   [targetMenu addItem:NSMenuItem.separatorItem];
   
-  // add edit action, aka prefsMenuItem
-  ADD_MENU(@"Change Plugin Folder…", changePluginDirectory,@"",self);
-  
-  // add edit action, aka openPluginFolderMenuItem
-  ADD_MENU(@"Open Plugin Folder…",openPluginFolder, nil, self);
-
-  // add browser item, aka openPluginBrowserMenuItem
-  ADD_MENU(@"Find More Plugins…", openPluginsBrowser, nil, self);
-
-  [targetMenu addItem:NSMenuItem.separatorItem];
-  
-  // open at login, aka openAtLoginMenuItem
-  LaunchAtLoginController *lc = LaunchAtLoginController.new;
-
-  [ADD_MENU(@"Open at Login", toggleOpenAtLogin:, nil, self) setState:lc.launchAtLogin];
-  
-  [targetMenu addItem:NSMenuItem.separatorItem];
+  if (!DEFS.userConfigDisabled) {
+    // add edit action, aka prefsMenuItem
+    ADD_MENU(@"Change Plugin Folder…", changePluginDirectory,@"",self);
+    
+    // add edit action, aka openPluginFolderMenuItem
+    ADD_MENU(@"Open Plugin Folder…",openPluginFolder, nil, self);
+    
+    // add browser item, aka openPluginBrowserMenuItem
+    ADD_MENU(@"Get Plugins…", openPluginsBrowser, nil, self);
+    
+    [targetMenu addItem:NSMenuItem.separatorItem];
+    
+    // open at login, aka openAtLoginMenuItem
+    [ADD_MENU(@"Open at Login", toggleOpenAtLogin:, nil, self) setState:_launchAtLoginController.launchAtLogin];
+    
+    [targetMenu addItem:NSMenuItem.separatorItem];
+  }
   
   NSString *versionString = [NSBundle.mainBundle.infoDictionary objectForKey:@"CFBundleShortVersionString"];
   
   NSMenuItem *versionMenuitem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"v%@", versionString] action:nil keyEquivalent:@""];
-  [targetMenu addItem:versionMenuitem];
+  
+  if (!self.latestVersion || [self.latestVersion isEqualToString:[[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString *)kCFBundleVersionKey]]) {
+    [targetMenu addItem:versionMenuitem];
+  } else {
+    NSImage *cautionImage = [NSImage imageNamed:NSImageNameCaution];
+    cautionImage.size = CGSizeMake(16, 16);
+    
+    NSMenuItem *latestVersionMenuItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"Download latest (v%@)", self.latestVersion]
+                                                                   action:@selector(openLatestRelease)
+                                                            keyEquivalent:@""];
+    latestVersionMenuItem.target = self;
+    latestVersionMenuItem.offStateImage = cautionImage;
+    [targetMenu addItem:latestVersionMenuItem];
+    
+    moreItem.offStateImage = cautionImage;
+    
+    versionMenuitem.title = [@"Current: " stringByAppendingString:versionMenuitem.title];
+    versionMenuitem.alternate = YES;
+    versionMenuitem.keyEquivalentModifierMask = NSAlternateKeyMask;
+    [targetMenu addItem:versionMenuitem];
+  }
 
-  // add troubleshooting item
-  ADD_MENU(@"User Guide…", openTroubleshootingPage,@"g",self);
-  
-  // add troubleshooting item
-  ADD_MENU(@"Report an Issue…",openReportIssuesPage,@"i",self);
-  
+//
+//  // add troubleshooting item
+//  ADD_MENU(@"User Guide…", openTroubleshootingPage,@"g",self);
+//
+//  // add troubleshooting item
+//  ADD_MENU(@"Report an Issue…",openHomepage,@"i",self);
+//  
   // quit menu
   ADD_MENU(@"Quit",quit, @"q",self);
 }
@@ -108,11 +139,11 @@
 }
 
 - (void) openPluginsBrowser {
-    [WSPACE openURL:[NSURL URLWithString:@"https://github.com/matryer/bitbar-plugins"]];
+    [WSPACE openURL:[NSURL URLWithString:@"https://getbitbar.com/"]];
 }
 
-- (void) openTroubleshootingPage {
-  [WSPACE openURL:[NSURL URLWithString:@"https://github.com/matryer/bitbar/wiki/User-Guide"]];
+- (void) openHomepage {
+  [WSPACE openURL:[NSURL URLWithString:@"https://github.com/matryer/bitbar"]];
 }
 
 - (void) openPluginFolder {
@@ -120,12 +151,11 @@
 }
 
 - (void) toggleOpenAtLogin:(id)sender {
-  
-  LaunchAtLoginController *lc = LaunchAtLoginController.new;
-  [lc setLaunchAtLogin:!lc.launchAtLogin];
+  [_launchAtLoginController setLaunchAtLogin:!_launchAtLoginController.launchAtLogin];
+}
 
-  [(NSMenuItem*)sender setState:lc.launchAtLogin];
-  
+- (void)openLatestRelease {
+  [WSPACE openURL:[NSURL URLWithString:@"https://github.com/matryer/bitbar/releases/latest"]];
 }
 
 - (NSArray*) pluginFilesWithAsking:(BOOL)shouldAsk {
@@ -155,11 +185,12 @@
       dirFiles = [dirFiles filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"NOT self BEGINSWITH '.'"]];
       // filter markdown files
       dirFiles = [dirFiles filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"NOT self ENDSWITH '.md'"]];
+      // filter application executable
       // filter subdirectories
       dirFiles = [dirFiles filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(id name, NSDictionary *bindings) {
         BOOL isDir;
         NSString * path = [self.path stringByAppendingPathComponent:name];
-        return [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && !isDir;
+        return ![path isEqualToString:[NSBundle mainBundle].executablePath] && [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && !isDir;
       }]];
       return dirFiles;
     }
@@ -188,6 +219,13 @@
     BOOL isDir = NO;
     if ([[NSFileManager defaultManager] fileExistsAtPath: openDlg.URL.path isDirectory: &isDir]
         && isDir) {
+      // symlink bundled plugins in selected directory
+      self.path = [NSBundle mainBundle].executablePath.stringByDeletingLastPathComponent;
+      NSArray *pluginFiles = [self pluginFilesWithAsking:NO];
+      for (NSString *file in pluginFiles)
+        [[NSFileManager defaultManager] createSymbolicLinkAtPath:[openDlg.URL.path stringByAppendingPathComponent:file]
+                                             withDestinationPath:[self.path stringByAppendingPathComponent:file]
+                                                           error:nil];
       
       self.path = [openDlg.URL path];
       [DEFS setPluginsDirectory:self.path];
@@ -206,9 +244,13 @@
 
 - (void) reset {
   
+  [self performSelectorInBackground:@selector(getLatestVersion) withObject:nil];
+  
   // remove all status items
-  Plugin *plugin;
-  for (plugin in _plugins) [self.statusBar removeStatusItem:plugin.statusItem];
+  for (Plugin *plugin in _plugins) {
+   [self.statusBar removeStatusItem:plugin.statusItem];
+   [plugin close];
+  }
   
   _plugins = nil;
   [self.statusBar removeStatusItem:self.defaultStatusItem];
@@ -263,6 +305,13 @@
 
     NSMutableDictionary *env = NSProcessInfo.processInfo.environment.mutableCopy;
     env[@"BitBar"] = @YES;
+      
+    // Determine if Mac is in Dark Mode
+    NSString *osxMode = [[NSUserDefaults standardUserDefaults] stringForKey:@"AppleInterfaceStyle"];
+    if ([osxMode isEqualToString:@"Dark"]) {
+        env[@"BitBarDarkMode"] = @YES;
+    }
+      
     env;
   });
   
@@ -298,17 +347,38 @@
     
     for (Plugin *plugin in plugins) [plugin refresh];
 
-    [_timerForLastUpdated invalidate];
-    self.timerForLastUpdated = [NSTimer scheduledTimerWithTimeInterval:5 target:self selector:@selector(updatePluginLastUpdatedValues) userInfo:nil repeats:YES];
-    
   }
 }
 
-- (void)updatePluginLastUpdatedValues {
+- (void)getLatestVersion {
+  if (DEFS.userConfigDisabled) {
+    return;
+  }
+  
+  // only refresh hourly
+  if (self.lastVersionUpdate && self.lastVersionUpdate.timeIntervalSinceNow > -60 * 60) {
+    return;
+  }
+  self.lastVersionUpdate = [NSDate date];
+  
+  NSData *data = [NSData dataWithContentsOfURL:[NSURL URLWithString:@"https://api.github.com/repos/matryer/bitbar/releases/latest"]];
+  if (data) {
+    NSDictionary *latest = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (latest[@"tag_name"]) {
+      self.latestVersion = latest[@"tag_name"];
+      if ([self.latestVersion hasPrefix:@"v"]) {
+        self.latestVersion = [self.latestVersion substringFromIndex:1];
+      }
+    }
+  }
+}
 
-  for (Plugin *plugin in self.plugins)
-    plugin.lastUpdated  ? [plugin.lastUpdatedMenuItem setTitle:[NSString stringWithFormat:@"Updated %@", plugin.lastUpdatedString]]
-                        : [plugin.lastUpdatedMenuItem setTitle:@"Refreshing…"];
+- (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
+  if ([menuItem action] == @selector(toggleOpenAtLogin:)) {
+    [menuItem setState:_launchAtLoginController.launchAtLogin ? NSOnState : NSOffState];
+  }
+
+  return YES;
 }
 
 #pragma mark - NSMenuDelegate

@@ -21,19 +21,22 @@
 @property (nonatomic)       NSNumber *refreshIntervalSeconds;
 @property (nonatomic)     NSMenuItem *lastUpdatedMenuItem;
 @property (nonatomic)         NSDate *lastUpdated;
-@property (readonly)   PluginManager *manager;
+@property (weak, readonly)   PluginManager *manager;
 
 // UI
 @property (nonatomic) NSStatusItem *statusItem;
 
 - initWithManager:(PluginManager*)manager;
+- (void) close;
 
-
+- (NSMenuItem*) buildMenuItemForLine:(NSString *)line;
 - (NSMenuItem*) buildMenuItemWithParams:(NSDictionary *)params;
+- (NSDictionary *)dictionaryForLine:(NSString *)line;
 - (void) rebuildMenuForStatusItem:(NSStatusItem*)statusItem;
 - (void) addAdditionalMenuItems:(NSMenu *)menu;
 - (void) addDefaultMenuItems:(NSMenu *)menu;
 
+- (void)performRefreshNow;
 - (BOOL) refresh;
 - (void) cycleLines;
 - (void) contentHasChanged;
@@ -41,5 +44,6 @@
 
 // actions
 - (void)changePluginsDirectorySelected:(id)sender;
+
 
 @end
